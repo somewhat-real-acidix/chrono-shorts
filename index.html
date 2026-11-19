@@ -86,6 +86,41 @@
     header { padding-left: 12px; padding-right: 12px; }
   }
 
+  /* Grid */
+  #scrGrid { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px calc(24px + var(--safe-bottom)); }
+  .gridbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 0; background: var(--bg); }
+  .chips { display: flex; gap: 8px; }
+  .chip { border: 0; border-radius: 8px; padding: 6px 12px; background: var(--panel); font-weight: 500; }
+  .chip.on { background: var(--text); color: var(--bg); }
+  #unCount { opacity: .7; font-variant-numeric: tabular-nums; }
+  .day { margin: 8px 0 20px; }
+  .day h3 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+  .day h3 span { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 6px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px 12px; }
+  .tile { all: unset; cursor: pointer; display: block; min-width: 0; }
+  .tile:focus-visible .tthumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tthumb { position: relative; aspect-ratio: 9 / 16; border-radius: 12px; overflow: hidden; background: #222; }
+  .tthumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .15s, filter .15s; }
+  .tile:hover .tthumb img { transform: scale(1.03); }
+  .tago { position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px; background: rgba(0,0,0,.7); color: #fff; font-size: 12px; font-weight: 500; }
+  .twatched { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 4px;
+    background: rgba(15,15,15,.55); color: #ddd; font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+  .twatched b { font-size: 26px; line-height: 1; }
+  .tile.watched .tthumb img { filter: grayscale(1) brightness(.6); }
+  .tile.watched .twatched { display: flex; }
+  .tile.watched .ttitle, .tile.watched .tchan { opacity: .5; }
+  .tile.last .tthumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ttitle { margin-top: 8px; font-size: 14px; font-weight: 500; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .tchan { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gridempty { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 15px; }
+  @media (max-width: 520px) {
+    #scrGrid { padding: 0 8px calc(24px + var(--safe-bottom)); }
+    .tiles { grid-template-columns: repeat(3, 1fr); gap: 12px 6px; }
+    .ttitle { font-size: 12px; }
+    #btnMarkAll { padding: 0 10px; font-size: 13px; }
+  }
+
   /* Screens and modal */
   .screen { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
   .panel { background: var(--panel); border-radius: 16px; padding: 24px; width: 100%; max-width: 460px; }
@@ -111,6 +146,7 @@
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
     Chrono
   </div>
+  <button class="hbtn" id="btnBack" hidden title="Back to grid (Esc)">← Grid</button>
   <div id="status"></div>
   <button class="hbtn" id="btnRefresh" hidden>Refresh</button>
   <button class="hbtn icon" id="btnSettings" title="Settings" aria-label="Settings">
@@ -150,6 +186,18 @@
     <p id="msgText"></p>
     <div class="actions" style="justify-content:center" id="msgActions"></div>
   </div>
+</section>
+
+<!-- Grid (landing page) -->
+<section id="scrGrid" hidden>
+  <div class="gridbar">
+    <div class="chips">
+      <button class="chip on" data-filter="all">All</button>
+      <button class="chip" data-filter="unwatched">Unwatched <span id="unCount"></span></button>
+    </div>
+    <button class="hbtn" id="btnMarkAll">Mark all watched</button>
+  </div>
+  <div id="grid"></div>
 </section>
 
 <!-- Player -->
@@ -205,6 +253,7 @@
     </div>
     <div class="actions">
       <button class="secondary" id="btnClear">Clear cached data</button>
+      <button class="secondary" id="btnClearWatched">Clear watched history</button>
       <button class="secondary danger" id="btnSignout">Sign out</button>
     </div>
   </div>
@@ -237,7 +286,9 @@ const saveSettings = () => store.set('settings', settings);
 
 // ---------- UI helpers ----------
 function showScreen(id) {
-  for (const s of ['scrSetup', 'scrSignin', 'scrMessage', 'scrPlayer']) $(s).hidden = s !== id;
+  for (const s of ['scrSetup', 'scrSignin', 'scrMessage', 'scrGrid', 'scrPlayer']) $(s).hidden = s !== id;
+  $('btnBack').hidden = id !== 'scrPlayer';
+  if (id !== 'scrPlayer') stopPlayback();
 }
 function message(title, text, { spinner = false, actions = [] } = {}) {
   $('msgTitle').textContent = title;
@@ -420,6 +471,7 @@ async function buildFeed(force, onProgress) {
 // ---------- Players ----------
 // Two YouTube embed players: one plays, the other quietly preloads the next Short.
 let feed = store.get('feed', null);
+let list = [];        // what the player steps through: a snapshot of the grid when you opened it
 let idx = 0;
 let ytReady = false;
 const slots = [];
@@ -464,7 +516,8 @@ function onState(slot, st) {
     }
     $('soundBadge').hidden = !slot.player.isMuted();
   } else if (st === P.ENDED) {
-    if (settings.endAction === 'next' && idx < feed.items.length - 1) go(1);
+    if (list[idx]) markWatched(list[idx].id);
+    if (settings.endAction === 'next' && idx < list.length - 1) go(1);
     else { slot.player.seekTo(0, true); slot.player.playVideo(); }
   }
 }
@@ -472,7 +525,7 @@ function onState(slot, st) {
 function onError(slot, code) {
   if (slot !== front) { slot.failed = true; slot.preloaded = false; return; }
   clearTimeout(watchdog); clearTimeout(revealTimer);
-  const it = feed.items[idx];
+  const it = list[idx];
   const why = { 2: 'Invalid video.', 5: 'This video can’t play in the embedded player.', 100: 'This Short was removed or made private.',
     101: 'The creator doesn’t allow this Short to play outside YouTube.', 150: 'The creator doesn’t allow this Short to play outside YouTube.',
     152: 'YouTube refused to play this here.', 153: 'YouTube refused to play this here (missing site address).' }[code] || `Playback error ${code}.`;
@@ -507,11 +560,11 @@ function playFront() {
 }
 
 function show(i, dir = 0) {
-  if (!feed || !feed.items.length) return;
-  idx = Math.max(0, Math.min(feed.items.length - 1, i));
+  if (!list.length) return;
+  idx = Math.max(0, Math.min(list.length - 1, i));
   if (!ytReady) { pendingShow = idx; renderMeta(); return; }
   pendingShow = null;
-  const it = feed.items[idx];
+  const it = list[idx];
   const card = $('card');
   card.classList.remove('revealed', 'errored', 'enter', 'enter-up');
   void card.offsetWidth;
@@ -537,7 +590,7 @@ function show(i, dir = 0) {
 
   // Preload the next Short (in scrolling direction) into the other slot.
   const back = other(front);
-  const ahead = feed.items[idx + (dir < 0 ? -1 : 1)] || feed.items[idx + 1];
+  const ahead = list[idx + (dir < 0 ? -1 : 1)] || list[idx + 1];
   setTimeout(() => {
     if (!ahead || front.id !== it.id || back.id === ahead.id) return;
     back.id = ahead.id; back.preloaded = false; back.failed = false;
@@ -546,14 +599,14 @@ function show(i, dir = 0) {
   }, 400);
 
   // Warm up the next few thumbnails.
-  for (let k = 1; k <= 3; k++) { const n = feed.items[idx + k]; if (n) new Image().src = thumbUrl(n.id); }
+  for (let k = 1; k <= 3; k++) { const n = list[idx + k]; if (n) new Image().src = thumbUrl(n.id); }
   updateCounter();
 }
 
 function thumbUrl(id) { return `https://i.ytimg.com/vi/${id}/oar2.jpg`; }
 
 function renderMeta() {
-  const it = feed.items[idx];
+  const it = list[idx];
   const img = $('thumb');
   img.onerror = () => { img.onerror = null; img.src = `https://i.ytimg.com/vi/${it.id}/hqdefault.jpg`; };
   img.src = thumbUrl(it.id);
@@ -565,13 +618,13 @@ function renderMeta() {
   $('btnOpen').href = `https://www.youtube.com/shorts/${it.id}`;
   updateCounter();
 }
-function updateCounter() { $('counter').textContent = feed ? `${idx + 1} / ${feed.items.length}` : ''; }
+function updateCounter() { $('counter').textContent = list.length ? `${idx + 1} / ${list.length}` : ''; }
 
 function go(dir) {
-  if (!feed) return;
+  if (!list.length) return;
   const n = idx + dir;
   if (n < 0) { toast('You’re at the newest Short.'); return; }
-  if (n >= feed.items.length) { toast(`That’s everything from the last ${settings.days} days.`); return; }
+  if (n >= list.length) { toast(`That’s everything from the last ${settings.days} days.`); return; }
   show(n, dir);
 }
 
@@ -602,6 +655,8 @@ setInterval(() => {
   try {
     const d = front.player.getDuration(), t = front.player.getCurrentTime();
     $('progress').firstElementChild.style.width = d ? (Math.min(1, t / d) * 100) + '%' : '0';
+    // Counts as watched after half the Short, or 5 seconds, whichever comes first.
+    if (d && t >= Math.min(5, d / 2) && list[idx] && front.player.getPlayerState() === YT.PlayerState.PLAYING) markWatched(list[idx].id);
   } catch {}
 }, 250);
 
@@ -637,6 +692,7 @@ setInterval(() => {
     else if (k === ' ') togglePlay();
     else if (k === 'm' || k === 'M') setSound(!settings.soundOn);
     else if (k === 'Home') show(0);
+    else if (k === 'Escape' || k === 'Backspace') backToGrid();
     else return;
     e.preventDefault();
   });
@@ -647,6 +703,109 @@ setInterval(() => {
   $('soundBadge').onclick = e => { e.stopPropagation(); setSound(true); };
   $('errSkip').onclick = () => go(1);
 })();
+
+// ---------- Watched tracking ----------
+// Stored in this browser only (your PC and phone keep separate lists).
+let watched = store.get('watched', {});
+(() => { // forget entries older than 120 days
+  const cut = Date.now() - 120 * 864e5;
+  let changed = false;
+  for (const id in watched) if (watched[id] < cut) { delete watched[id]; changed = true; }
+  if (changed) store.set('watched', watched);
+})();
+function markWatched(id) {
+  if (watched[id]) return;
+  watched[id] = Date.now();
+  store.set('watched', watched);
+}
+
+// ---------- Grid ----------
+let gridFilter = store.get('gridFilter', 'all');
+let gridItems = [];
+let lastPlayedId = null;
+
+function dayLabel(ms) {
+  const d = new Date(ms), today = new Date();
+  const start = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((start(today) - start(d)) / 864e5);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
+function esc(t) { return String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+function renderGrid() {
+  if (!feed || !feed.items) return;
+  const unwatched = feed.items.filter(it => !watched[it.id]);
+  $('unCount').textContent = unwatched.length;
+  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.filter === gridFilter));
+  gridItems = gridFilter === 'unwatched' ? unwatched : feed.items;
+  $('btnMarkAll').hidden = !unwatched.length;
+
+  const grid = $('grid');
+  if (!gridItems.length) {
+    grid.innerHTML = `<div class="gridempty">${gridFilter === 'unwatched' ? 'All caught up — you’ve watched everything here. 🎉' : 'No Shorts to show.'}</div>`;
+    return;
+  }
+  const groups = [];
+  gridItems.forEach((it, k) => {
+    const label = dayLabel(it.at);
+    if (!groups.length || groups[groups.length - 1].label !== label) groups.push({ label, tiles: [] });
+    groups[groups.length - 1].tiles.push(`
+      <button class="tile${watched[it.id] ? ' watched' : ''}${it.id === lastPlayedId ? ' last' : ''}" data-k="${k}" data-id="${it.id}"
+        title="${esc(it.title)}\n${esc(it.channelTitle)} · ${esc(new Date(it.at).toLocaleString())}">
+        <div class="tthumb">
+          <img loading="lazy" src="${thumbUrl(it.id)}" alt="" onerror="this.onerror=null;this.src='https://i.ytimg.com/vi/${it.id}/hqdefault.jpg'">
+          <div class="twatched"><b>✓</b>Watched</div>
+          <span class="tago">${timeAgo(it.at)}</span>
+        </div>
+        <div class="ttitle">${esc(it.title)}</div>
+        <div class="tchan">${esc(it.channelTitle)}</div>
+      </button>`);
+  });
+  grid.innerHTML = groups.map(g =>
+    `<section class="day"><h3>${esc(g.label)}<span>${g.tiles.length}</span></h3><div class="tiles">${g.tiles.join('')}</div></section>`).join('');
+}
+
+function openPlayer(k) {
+  list = gridItems.slice();
+  showScreen('scrPlayer');
+  show(k);
+}
+function stopPlayback() {
+  clearTimeout(watchdog); clearTimeout(revealTimer);
+  if (ytReady) slots.forEach(s => { try { s.player.pauseVideo(); } catch {} });
+}
+function backToGrid() {
+  lastPlayedId = list[idx] ? list[idx].id : null;
+  showScreen('scrGrid');
+  renderGrid();
+  const tile = lastPlayedId && document.querySelector(`.tile[data-id="${lastPlayedId}"]`);
+  if (tile) tile.scrollIntoView({ block: 'center' });
+}
+
+$('grid').addEventListener('click', e => {
+  const t = e.target.closest('.tile');
+  if (t) openPlayer(+t.dataset.k);
+});
+document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+  gridFilter = c.dataset.filter; store.set('gridFilter', gridFilter);
+  renderGrid(); $('scrGrid').scrollTop = 0;
+}));
+$('btnMarkAll').onclick = () => {
+  const n = feed.items.filter(it => !watched[it.id]).length;
+  feed.items.forEach(it => { if (!watched[it.id]) watched[it.id] = Date.now(); });
+  store.set('watched', watched);
+  renderGrid();
+  toast(`Marked ${n} Short${n === 1 ? '' : 's'} as watched.`);
+};
+$('btnBack').onclick = backToGrid;
+$('btnClearWatched').onclick = () => {
+  watched = {}; store.set('watched', watched);
+  $('modal').hidden = true;
+  if (!$('scrGrid').hidden) renderGrid();
+  toast('Watched history cleared.');
+};
 
 // ---------- Refresh ----------
 let refreshing = false;
@@ -663,28 +822,27 @@ async function refresh(force) {
       const text = `Checking channels: ${d} / ${t}`;
       if (!hadFeed) $('msgText').textContent = text; else $('status').textContent = text;
     });
-    const currentId = hadFeed && feed.items[idx] && feed.items[idx].id;
+    const inPlayer = !$('scrPlayer').hidden;
+    const prevNewest = hadFeed ? feed.items[0].id : null;
     feed = f;
     setStatus();
     if (f.failed) toast(`${f.failed} channel(s) couldn’t be checked; they’ll retry next refresh.`);
     if (!f.items.length) {
       message('No Shorts found', `None of your ${f.channelCount} subscriptions posted a Short in the last ${settings.days} days.`,
         { actions: [{ label: 'Settings', onClick: openSettings }] });
+    } else if (inPlayer) {
+      const newer = f.items.findIndex(x => x.id === prevNewest);
+      if (newer > 0) toast(`${newer} new Short${newer > 1 ? 's' : ''} — go back to the grid to see ${newer > 1 ? 'them' : 'it'}.`);
     } else {
-      showScreen('scrPlayer');
-      const keep = currentId ? f.items.findIndex(x => x.id === currentId) : -1;
-      if (hadFeed && keep >= 0) {
-        idx = keep; updateCounter();
-        const newer = keep;
-        if (newer > 0) toast(`${newer} newer Short${newer > 1 ? 's' : ''} above — press ↑ or swipe down.`);
-      } else show(0);
+      showScreen('scrGrid');
+      renderGrid();
     }
   } catch (e) {
     if (e.status === 401 && !justSignedIn) { signIn(force ? 'force' : 'refresh'); return; }
     if (e.status === 401) e.message = 'Google accepted the sign-in but the YouTube API rejected the token. Check that the YouTube Data API v3 is enabled in the same Google Cloud project as your OAuth client.';
     let text = e.message;
     if (e.reason === 'quotaExceeded') text = 'Daily YouTube API quota used up. It resets at midnight Pacific time.';
-    else if (e.reason === 'accessNotConfigured' || /has not been used|is disabled/i.test(e.message)) text = 'The YouTube Data API v3 isn’t enabled in your Google Cloud project. See the setup guide, step 1.';
+    else if (e.reason === 'accessNotConfigured' || /has not been used|is disabled/i.test(e.message)) text = 'The YouTube Data API v3 isn’t enabled in your Google Cloud project. See the setup guide, step 1b.';
     else if (e.reason === 'insufficientPermissions') text = 'YouTube read access wasn’t granted. Sign out and sign in again, and allow access.';
     if (hadFeed) toast('Refresh failed: ' + text, 6000);
     else message('Couldn’t load your Shorts', text, { actions: [{ label: 'Try again', primary: true, onClick: () => refresh(true) }, { label: 'Settings', onClick: openSettings }] });
@@ -749,9 +907,9 @@ function start() {
   if (r && r.error) toast(r.error, 6000);
 
   if (feed && feed.items && feed.items.length) {
-    showScreen('scrPlayer');
+    showScreen('scrGrid');
     setStatus();
-    show(0);
+    renderGrid();
   }
   if (r && r.ok) { refresh(r.after === 'force'); return; }
   if (feed && feed.items && feed.items.length) {
