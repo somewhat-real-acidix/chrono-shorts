@@ -57,7 +57,17 @@
     width: 72px; height: 72px; border-radius: 50%; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; font-size: 30px; opacity: 0; transition: opacity .2s; }
   #bigicon.show { opacity: 1; }
 
-  #meta { position: absolute; left: 0; right: 0; bottom: 0; z-index: 7; padding: 60px 14px 16px; pointer-events: none;
+  #actions { position: absolute; right: 8px; bottom: 96px; z-index: 9; display: flex; flex-direction: column; gap: 16px; align-items: center; }
+  .act { all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; color: #fff; text-decoration: none; }
+  .act .ai { width: 48px; height: 48px; border-radius: 50%; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; transition: background .15s, transform .1s; }
+  .act:hover .ai { background: rgba(60,60,60,.7); }
+  .act:active .ai { transform: scale(.92); }
+  .act .al { font-size: 12px; font-weight: 500; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  #btnLike svg path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+  #btnLike.liked svg path { fill: currentColor; stroke: none; }
+  #btnLike.liked .ai { background: #fff; color: #0f0f0f; }
+  #btnLike.busy { opacity: .6; pointer-events: none; }
+  #meta { position: absolute; left: 0; right: 0; bottom: 0; z-index: 7; padding: 60px 76px 16px 14px; pointer-events: none;
     background: linear-gradient(transparent, rgba(0,0,0,.75)); color: #fff; }
   #meta a { pointer-events: auto; text-decoration: none; }
   #meta a:hover { text-decoration: underline; }
@@ -215,6 +225,20 @@
       <a id="mChannel" target="_blank" rel="noopener"></a>
       <div id="mTitle"></div>
     </div>
+    <div id="actions">
+      <button class="act" id="btnLike" title="Like">
+        <span class="ai"><svg width="24" height="24" viewBox="0 0 24 24"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg></span>
+        <span class="al" id="likeLabel">Like</span>
+      </button>
+      <a class="act" id="btnComments" target="_blank" rel="noopener" title="Comments (opens YouTube)">
+        <span class="ai"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h14l3 3z"/></svg></span>
+        <span class="al">Comments</span>
+      </a>
+      <a class="act" id="btnYT" target="_blank" rel="noopener" title="Open on YouTube">
+        <span class="ai"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></span>
+        <span class="al">YouTube</span>
+      </a>
+    </div>
     <div id="progress"><div></div></div>
     <div id="errBox" hidden>
       <div id="errText"></div>
@@ -229,7 +253,6 @@
     <div id="counter"></div>
     <button class="round" id="btnNext" title="Older (↓)">▼</button>
     <button class="round" id="btnMute" title="Mute (M)">🔊</button>
-    <a class="round" id="btnOpen" title="Open on YouTube" target="_blank" rel="noopener" style="text-decoration:none">↗</a>
   </div>
 </main>
 
@@ -266,6 +289,7 @@
 const CONFIG_CLIENT_ID = '';
 
 const SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
+const SCOPE_WRITE = 'https://www.googleapis.com/auth/youtube.force-ssl'; // only requested after you first press Like
 const API = 'https://www.googleapis.com/youtube/v3';
 const SUBS_TTL = 12 * 3600e3;     // re-read your subscription list twice a day
 const CHANNEL_TTL = 30 * 60e3;    // re-check a channel's Shorts after 30 minutes
@@ -332,7 +356,9 @@ function tokenValid() {
   const t = store.get('token', null);
   return t && t.access_token && t.expires_at - 60e3 > Date.now() ? t.access_token : null;
 }
-function signIn(after = 'refresh') {
+function signIn(after = 'refresh', wantWrite = false) {
+  // Remember where you were in the player, so you come back to the same Short.
+  if (!$('scrPlayer').hidden && list.length) sessionStorage.setItem('chrono.resume', JSON.stringify({ ids: list.map(i => i.id), idx }));
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
   sessionStorage.setItem('chrono.oauthState', state);
   sessionStorage.setItem('chrono.after', after);
@@ -340,7 +366,7 @@ function signIn(after = 'refresh') {
     client_id: settings.clientId,
     redirect_uri: redirectUri(),
     response_type: 'token',
-    scope: SCOPE,
+    scope: (settings.likeEnabled || wantWrite) ? SCOPE + ' ' + SCOPE_WRITE : SCOPE,
     include_granted_scopes: 'true',
     state
   });
@@ -360,7 +386,9 @@ function handleRedirect() {
   if (p.has('error')) return { error: 'Google sign-in failed: ' + p.get('error') };
   const granted = (p.get('scope') || '').split(' ');
   if (!granted.includes(SCOPE)) return { error: 'Read access to YouTube was not granted. Sign in again and allow it.' };
-  store.set('token', { access_token: p.get('access_token'), expires_at: Date.now() + (+p.get('expires_in') || 3600) * 1000 });
+  const canWrite = granted.includes(SCOPE_WRITE);
+  if (canWrite && !settings.likeEnabled) { settings.likeEnabled = true; saveSettings(); }
+  store.set('token', { access_token: p.get('access_token'), expires_at: Date.now() + (+p.get('expires_in') || 3600) * 1000, write: canWrite });
   return { ok: true, after };
 }
 function signOut() {
@@ -377,11 +405,11 @@ function signOut() {
 class ApiError extends Error {
   constructor(status, reason, msg) { super(msg || reason); this.status = status; this.reason = reason; }
 }
-async function api(path, params) {
+async function api(path, params, method = 'GET') {
   const token = tokenValid();
   if (!token) throw new ApiError(401, 'signedOut', 'Signed out');
   const url = API + path + '?' + new URLSearchParams(params);
-  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+  const res = await fetch(url, { method, headers: { Authorization: 'Bearer ' + token } });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const e = body.error || {};
@@ -615,7 +643,9 @@ function renderMeta() {
   $('mChannel').textContent = it.channelTitle;
   $('mChannel').href = `https://www.youtube.com/channel/${it.channelId}/shorts`;
   $('mTitle').textContent = it.title;
-  $('btnOpen').href = `https://www.youtube.com/shorts/${it.id}`;
+  $('btnYT').href = `https://www.youtube.com/shorts/${it.id}`;
+  $('btnComments').href = `https://www.youtube.com/shorts/${it.id}`;
+  updateLike();
   updateCounter();
 }
 function updateCounter() { $('counter').textContent = list.length ? `${idx + 1} / ${list.length}` : ''; }
@@ -691,6 +721,7 @@ setInterval(() => {
     else if (k === 'ArrowUp' || k === 'k') go(-1);
     else if (k === ' ') togglePlay();
     else if (k === 'm' || k === 'M') setSound(!settings.soundOn);
+    else if (k === 'l' || k === 'L') toggleLike();
     else if (k === 'Home') show(0);
     else if (k === 'Escape' || k === 'Backspace') backToGrid();
     else return;
@@ -703,6 +734,79 @@ setInterval(() => {
   $('soundBadge').onclick = e => { e.stopPropagation(); setSound(true); };
   $('errSkip').onclick = () => go(1);
 })();
+
+// ---------- Likes ----------
+// Liking uses YouTube's API (videos.rate). It needs one extra Google permission,
+// which Chrono only asks for the first time you press Like.
+const ratings = {}; // videoId -> 'like' | 'none' | 'dislike'
+function canWrite() { const t = store.get('token', null); return !!(tokenValid() && t && t.write); }
+
+function updateLike() {
+  const it = list[idx];
+  const liked = !!it && ratings[it.id] === 'like';
+  $('btnLike').classList.toggle('liked', liked);
+  $('likeLabel').textContent = liked ? 'Liked' : 'Like';
+  if (it && ratings[it.id] === undefined && canWrite()) loadRatings(idx);
+}
+let ratingsLoading = false;
+async function loadRatings(from) {
+  if (ratingsLoading) return;
+  // One request checks up to 50 Shorts (1 quota unit), so look ahead in batches.
+  const ids = list.slice(from, from + 50).map(i => i.id).filter(id => ratings[id] === undefined);
+  if (!ids.length) return;
+  ratingsLoading = true;
+  try {
+    const body = await api('/videos/getRating', { id: ids.join(',') });
+    // Don't overwrite a like you made while this request was in flight.
+    for (const r of body.items || []) if (ratings[r.videoId] === undefined) ratings[r.videoId] = r.rating;
+    for (const id of ids) if (ratings[id] === undefined) ratings[id] = 'none';
+  } catch (e) { /* not fatal; the button just shows "Like" */ }
+  ratingsLoading = false;
+  const it = list[idx];
+  if (it && ids.includes(it.id)) updateLike();
+}
+
+async function toggleLike() {
+  const it = list[idx];
+  if (!it) return;
+  if (!canWrite()) {
+    if (!settings.likeEnabled && !confirm('Liking needs one extra permission from Google. The consent screen will describe it as letting Chrono see, edit and delete your YouTube videos, ratings, comments and captions. Chrono only uses it to like and unlike Shorts.\n\nContinue to Google?')) return;
+    signIn('like:' + it.id, true);
+    return;
+  }
+  const before = ratings[it.id];
+  const next = before === 'like' ? 'none' : 'like';
+  ratings[it.id] = next; updateLike();
+  $('btnLike').classList.add('busy');
+  try {
+    await api('/videos/rate', { id: it.id, rating: next }, 'POST');
+    if (next === 'like') flashIcon('👍');
+  } catch (e) {
+    ratings[it.id] = before; updateLike();
+    if (e.status === 401) { signIn('like:' + it.id, true); return; }
+    if (e.status === 403 && e.reason === 'insufficientPermissions') { settings.likeEnabled = false; saveSettings(); toast('Like permission wasn’t granted. Press Like again to allow it.'); }
+    else toast('Couldn’t update the like: ' + (e.reason === 'quotaExceeded' ? 'daily API quota used up.' : e.message), 5000);
+  } finally {
+    $('btnLike').classList.remove('busy');
+  }
+}
+$('btnLike').onclick = e => { e.stopPropagation(); toggleLike(); };
+
+// Back from Google sign-in: reopen the player where you were.
+function resumePlayer() {
+  let rs = null;
+  try { rs = JSON.parse(sessionStorage.getItem('chrono.resume') || 'null'); } catch {}
+  sessionStorage.removeItem('chrono.resume');
+  if (!rs || !feed || !feed.items) return false;
+  const byId = new Map(feed.items.map(i => [i.id, i]));
+  const items = rs.ids.map(id => byId.get(id)).filter(Boolean);
+  if (!items.length) return false;
+  const cur = rs.ids[rs.idx];
+  list = items;
+  showScreen('scrPlayer');
+  show(Math.max(0, list.findIndex(i => i.id === cur)));
+  return true;
+}
 
 // ---------- Watched tracking ----------
 // Stored in this browser only (your PC and phone keep separate lists).
@@ -911,7 +1015,15 @@ function start() {
     setStatus();
     renderGrid();
   }
-  if (r && r.ok) { refresh(r.after === 'force'); return; }
+  if (r && r.ok && r.after && r.after.startsWith('like:')) {
+    resumePlayer();
+    const id = r.after.slice(5);
+    if (!canWrite()) { toast('Like permission wasn’t granted.'); return; }
+    if (list[idx] && list[idx].id === id) toggleLike();
+    else api('/videos/rate', { id, rating: 'like' }, 'POST').then(() => { ratings[id] = 'like'; toast('Liked 👍'); }).catch(() => toast('Couldn’t like that Short.'));
+    return;
+  }
+  if (r && r.ok) { sessionStorage.removeItem('chrono.resume'); refresh(r.after === 'force'); return; }
   if (feed && feed.items && feed.items.length) {
     // Quietly refresh if the cache is old and we're still signed in.
     if (tokenValid() && Date.now() - feed.at > CHANNEL_TTL) refresh(false);

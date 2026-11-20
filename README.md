@@ -253,7 +253,15 @@ In the repository, click `index.html` → the pencil icon (or **Add file → Upl
 | Pause / play | Tap the video | Click the video, or Space |
 | Sound on/off | 🔇 badge | `m` or 🔊 |
 | Back to the grid | ← Grid | `Esc`, `Backspace`, or ← Grid |
-| Open on YouTube | Tap the channel name | ↗ button |
+| Like / unlike | 👍 Like | 👍 Like or `l` |
+| Comments | 💬 Comments (opens the Short on YouTube) | same |
+| Open on YouTube | YouTube button, or tap the channel name | same |
+
+**Liking.** YouTube's embedded player has no Like, comment or subscribe buttons; those only exist on youtube.com and in the app. Chrono's 👍 button likes the Short through YouTube's API instead, so it shows up in your YouTube **Liked videos** like any other like.
+- **The first time you press Like,** Chrono asks Google for one extra permission and sends you through sign-in again. Google's wording sounds broad, "See, edit, and permanently delete your YouTube videos, ratings, comments and captions", because that's the smallest permission that allows liking at all. Chrono only uses it to like and unlike. After that you return to the same Short, and it's liked.
+- Optional: in Google Cloud, **Google Auth Platform → Data Access → Add or remove scopes**, also tick `…/auth/youtube.force-ssl` and **Save**. This isn't required in Testing mode; it just keeps the console's list complete.
+- Each like or unlike costs 50 quota units, and checking which Shorts you've liked costs 1 unit per 50 Shorts. Both are tiny next to the 10,000 daily limit.
+- **Comments** opens the Short on YouTube, where you can read and post comments.
 
 - **Refresh** (top bar) checks every channel again. Without it, the app reuses data it fetched in the last 30 minutes, and your subscription list is re-read twice a day.
 - **⚙ Settings:** how many days back to show (default 14), how many recent Shorts to check per channel, and whether a finished Short replays or moves on to the next one.
